@@ -330,18 +330,19 @@ function estimateTokens(text) {
 }
 
 // Embedding models have a finite context (nomic-embed-text: 8192 tokens
-// native, but Ollama loads it at its 2048-token default unless the
-// request asks for more; text-embedding-3-small: 8191). Ollama answers
+// native, but Ollama loads it at its 2048-token default). Ollama answers
 // an overlong embedding prompt with HTTP 500 ("the input length exceeds
-// the context length") instead of truncating, so the Ollama encoder asks
-// for the model's full 8192-token context and the network encoders
-// truncate each prompt to a conservative budget before sending.
-// estimateTokens runs ~4 chars/token, so 3000 estimated tokens (~12k
-// chars) fits even when the text tokenizes much denser than that.
-// The offline encoder and the BM25 corpus are NOT truncated — the
-// offline numbers must stay byte-identical to the published run, and
-// BM25 has no context limit.
-const MAX_EMBED_TOKENS = 3000;
+// the context length") instead of truncating — and, observed Nov 12,
+// the embeddings endpoint does NOT honor `options.num_ctx`: a 3000-token
+// prompt failed even with num_ctx 8192 in the request. So the cap below
+// targets the 2048-token default, not the native context. estimateTokens
+// runs ~4 chars/token, so 1200 estimated tokens (~4800 chars) fits 2048
+// even when the text tokenizes much denser than that. The request still
+// carries num_ctx 8192 in case a future Ollama honors it; the cap is
+// what actually keeps the run alive. The offline encoder and the BM25
+// corpus are NOT truncated — the offline numbers must stay byte-identical
+// to the published run, and BM25 has no context limit.
+const MAX_EMBED_TOKENS = 1200;
 
 function truncateEmbedText(text) {
   const s = String(text || '');
