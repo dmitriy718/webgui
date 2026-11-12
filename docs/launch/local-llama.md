@@ -25,12 +25,15 @@ approval in memory and watching the agent refuse to act on it.
 GitHub: https://github.com/dmitriy718/webgui
 
 Honest caveat: this is a theory with a working reference implementation,
-not a benchmarked product. The papers are in `docs/papers/`. I did run
-LoCoMo/LongMemEval retrieval overnight with the offline encoder, and
-geodesic does NOT beat cosine there (LoCoMo recall@10 14.1% vs 22.9%;
-full report in `bench-report.md`, harness in `server/bench/`). The
-honest reading is that the geometry claim is untested with a real
-encoder, not disproved — re-running with nomic-embed-text is next.
+not a benchmarked product. The papers are in `docs/papers/`. I ran
+LoCoMo/LongMemEval retrieval with the offline encoder, and geodesic
+does NOT beat cosine there (LoCoMo recall@10 14.1% vs 22.9%). With a
+real encoder (nomic-embed-text), the ordering flips on LoCoMo:
+recall@10 39.1% geodesic vs 36.6% cosine on the same manifold points,
+paired wins 214–120 — a small margin, and BM25 still leads overall
+because the questions are lexical. Full report in `bench-report.md`,
+harness in `server/bench/`. The LongMemEval real-encoder run is
+still going.
 
 **Posting notes (do not paste):**
 - One post, link in the body, no cross-post spam the same day. Reply to

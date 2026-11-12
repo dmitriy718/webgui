@@ -43,19 +43,23 @@ Repo: https://github.com/dmitriy718/webgui
 
 Honest status: this is a theory with a working reference implementation,
 not a benchmarked product — and I ran the first real retrieval numbers
-overnight so I am not asking you to take the geometry on faith. With the
-offline (hashed-TF) fallback encoder, geodesic does NOT beat cosine:
-LoCoMo recall@10 is 14.1% geodesic vs 22.9% cosine on the same
-embeddings; LongMemEval 68.2% vs 72.0%. The honest reading is that the
-H1 claim is untested at real scale with a real encoder, not disproved —
-in that run every record had the same abstraction radius, so the radial
-channel carried no signal. Re-running with nomic-embed-text is next;
-the harness is in `server/bench/` and the full report (tables,
-per-category breakdowns, caveats) is in `bench-report.md`. The two
-papers are in `docs/papers/`; they state five predictions with kill
-criteria and make no empirical claims. The scenarios demonstrate the
-mechanisms — they are not the Phase 2 evaluations. Happy to be told
-where the geometry or the authority lattice is wrong.
+so I am not asking you to take the geometry on faith. With the offline
+(hashed-TF) fallback encoder, geodesic does NOT beat cosine: LoCoMo
+recall@10 is 14.1% geodesic vs 22.9% cosine on the same embeddings.
+With a real encoder (nomic-embed-text), the ordering flips: LoCoMo
+recall@10 is 39.1% geodesic vs 36.6% cosine on the same manifold
+points and 39.0% cosine on the raw vectors — paired wins 214–120 and
+259–222 — while BM25 still leads overall (44.8%) because the questions
+are lexical. So H1 has real-data support with a real encoder, by a
+small margin, and the honest caveat stands: every record in that run
+had the same abstraction radius, so the radial channel carried no
+signal. The LongMemEval re-run with real embeddings is running
+overnight. Harness in `server/bench/`, full report (both runs, tables,
+caveats) in `bench-report.md`. The two papers are in `docs/papers/`; they
+state five predictions with kill criteria and make no empirical claims.
+The scenarios demonstrate the mechanisms — they are not the Phase 2
+evaluations. Happy to be told where the geometry or the authority
+lattice is wrong.
 
 **Posting notes (do not paste):**
 - Post from Dmitriy's HN account, Thursday morning ET. Answer comments

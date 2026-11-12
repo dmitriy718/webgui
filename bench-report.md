@@ -296,3 +296,37 @@ See `server/bench/README.md` for dataset download links, the
 `--probe` worked-examples mode, and the `--resume` flag (the
 LongMemEval run checkpoints every 50 items after an interrupted
 first attempt).
+
+## Addendum — real-encoder re-run (LoCoMo, Nov 11, 2026)
+
+After the offline run above, the same harness was re-run on the Mac
+mini with `BENCH_ENCODER=ollama` (`nomic-embed-text`,
+`http://100.102.194.13:11434`). Same dataset, same protocol, same
+uniform `episodic` indexing; only the encoder changed. Results written
+to `locomo-results-ollama.json` (a separate file — the offline numbers
+above are untouched).
+
+| method | R@1 | R@3 | R@5 | R@10 | MRR@10 |
+|---|---|---|---|---|---|
+| **geodesic** | 11.3% | 22.7% | 30.0% | 39.1% | 0.190 |
+| cosine-manifold | 9.8% | 21.8% | 27.6% | 36.6% | 0.176 |
+| cosine-base | 10.6% | 22.2% | 29.2% | 39.0% | 0.185 |
+| bm25 | 19.0% | 30.4% | 36.5% | 44.8% | 0.265 |
+
+Paired first-gold-rank, hits-only: geo vs cosine-manifold **214–120**
+(n=625); vs cosine-base **259–222** (n=686); vs BM25 **305–474**
+(n=891). Rent-gate refusals: 6 turns of 5,882; 0 questions
+unretrievable. Runtime 219.0 s.
+
+Reading: with a real encoder the ordering flips — geodesic now beats
+both cosine variants on LoCoMo (clearly vs cosine-manifold on the same
+points, narrowly vs cosine-base on the raw vectors), and absolute
+recall rises ~2.8x for the embedding methods. BM25's numbers are
+identical to the offline run (it does not use embeddings) — a useful
+control confirming the harness and corpus are unchanged. BM25 still
+leads overall (44.8%) because the questions are lexical. The margin
+for geodesic is small, and the radial channel still carried no signal
+(uniform `episodic` indexing), so this supports H1 at real scale with
+a real encoder without settling the abstraction question. The
+LongMemEval real-encoder re-run was still pending at the time of this
+addendum.

@@ -33,10 +33,10 @@ Five theory scenarios ship in the repo — `npm run scenarios` prints the
 report with the numbers.
 
 **5/**
-Honest status: theory + working reference implementation. I ran
-LoCoMo/LongMemEval retrieval overnight with the offline encoder:
-geodesic does NOT beat cosine there (LoCoMo R@10 14.1% vs 22.9%).
-Full report in bench-report.md — the real-encoder re-run is next.
+Honest status: theory + working reference implementation. LoCoMo
+retrieval, offline encoder: geodesic does NOT beat cosine (R@10 14.1%
+vs 22.9%). Real encoder (nomic-embed-text): it flips — 39.1% vs 36.6%,
+paired wins 214–120. Full report in bench-report.md.
 
 Tell me where the geometry or the authority lattice is wrong.
 
