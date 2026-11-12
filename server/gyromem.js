@@ -329,15 +329,19 @@ function estimateTokens(text) {
   return Math.max(1, Math.ceil(String(text || '').length / 4));
 }
 
-// Embedding models have a finite context (nomic-embed-text: 8192 tokens;
-// text-embedding-3-small: 8191). Ollama answers an overlong embedding
-// prompt with HTTP 500 instead of truncating, so the network encoders
-// truncate to a conservative budget before sending. estimateTokens runs
-// ~4 chars/token, so 6000 estimated tokens (~24k chars) leaves headroom
-// for text that tokenizes denser than 4 chars/token. The offline encoder
-// and the BM25 corpus are NOT truncated — the offline numbers must stay
-// byte-identical to the published run, and BM25 has no context limit.
-const MAX_EMBED_TOKENS = 6000;
+// Embedding models have a finite context (nomic-embed-text: 8192 tokens
+// native, but Ollama loads it at its 2048-token default unless the
+// request asks for more; text-embedding-3-small: 8191). Ollama answers
+// an overlong embedding prompt with HTTP 500 ("the input length exceeds
+// the context length") instead of truncating, so the Ollama encoder asks
+// for the model's full 8192-token context and the network encoders
+// truncate each prompt to a conservative budget before sending.
+// estimateTokens runs ~4 chars/token, so 3000 estimated tokens (~12k
+// chars) fits even when the text tokenizes much denser than that.
+// The offline encoder and the BM25 corpus are NOT truncated — the
+// offline numbers must stay byte-identical to the published run, and
+// BM25 has no context limit.
+const MAX_EMBED_TOKENS = 3000;
 
 function truncateEmbedText(text) {
   const s = String(text || '');
@@ -402,7 +406,7 @@ class OllamaEncoder {
     const res = await fetch(`${this.baseUrl}/api/embeddings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: this.model, prompt }),
+      body: JSON.stringify({ model: this.model, prompt, options: { num_ctx: 8192 } }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {

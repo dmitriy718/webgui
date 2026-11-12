@@ -53,9 +53,14 @@ Pull the model first on the machine that runs it
 (`ollama pull nomic-embed-text`).
 
 **Long texts are truncated before embedding.** nomic-embed-text has an
-8192-token context and Ollama answers an overlong embedding prompt
-with HTTP 500 instead of truncating, so the network encoders truncate
-each prompt to ~6000 estimated tokens (~24k chars) before sending.
+8192-token context, but Ollama loads it at its 2048-token default
+unless the request asks for more — and answers an overlong embedding
+prompt with HTTP 500 (`the input length exceeds the context length`)
+instead of truncating. So the Ollama encoder asks for the model's full
+8192-token context (`options.num_ctx`) and the network encoders
+truncate each prompt to ~3000 estimated tokens (~12k chars) before
+sending, which fits even when the text tokenizes much denser than
+~4 chars/token.
 The offline encoder and the BM25 corpus are NOT truncated — the
 offline numbers must stay byte-identical to the published run. A
 failed embedding now reports the server's own error text, not just

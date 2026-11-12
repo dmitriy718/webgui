@@ -355,7 +355,8 @@ test('OllamaEncoder truncates an overlong prompt before sending', async () => {
     const enc = new g.OllamaEncoder({ baseUrl: 'http://127.0.0.1:11434', model: 'nomic-embed-text' });
     const vec = await enc.embedOne('x'.repeat(100000));
     assert.equal(vec.length, 2);
-    assert.equal(sent.prompt.length, 24000);
+    assert.equal(sent.prompt.length, 12000);
+    assert.deepEqual(sent.options, { num_ctx: 8192 });
   } finally {
     restore();
   }
@@ -395,7 +396,7 @@ test('OpenAIEncoder truncates each batch input before sending', async () => {
     const vecs = await enc.embed(['ok', 'y'.repeat(50000)]);
     assert.equal(vecs.length, 2);
     assert.equal(sent.input[0], 'ok');
-    assert.equal(sent.input[1].length, 24000);
+    assert.equal(sent.input[1].length, 12000);
   } finally {
     restore();
   }
