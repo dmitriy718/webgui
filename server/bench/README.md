@@ -52,6 +52,15 @@ recorded in the results JSON (`encoder` field) and printed at startup.
 Pull the model first on the machine that runs it
 (`ollama pull nomic-embed-text`).
 
+**Long texts are truncated before embedding.** nomic-embed-text has an
+8192-token context and Ollama answers an overlong embedding prompt
+with HTTP 500 instead of truncating, so the network encoders truncate
+each prompt to ~6000 estimated tokens (~24k chars) before sending.
+The offline encoder and the BM25 corpus are NOT truncated — the
+offline numbers must stay byte-identical to the published run. A
+failed embedding now reports the server's own error text, not just
+the bare HTTP status.
+
 Absolute recall with the offline encoder is modest and noisy; the
 meaningful result is the *paired* comparison (same embeddings,
 different metric). A real encoder should change absolute numbers

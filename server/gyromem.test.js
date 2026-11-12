@@ -336,3 +336,67 @@ test('KnowledgeBase without memory: search() is unchanged BM25 behavior', () => 
   assert.ok(hits[0].chunk.includes('quick brown fox'));
   assert.equal(hits[0].retrieval, 'bm25');
 });
+
+// -- network encoders: context truncation + error surfacing ---------------
+
+function mockFetchOnce(handler) {
+  const orig = global.fetch;
+  global.fetch = handler;
+  return () => { global.fetch = orig; };
+}
+
+test('OllamaEncoder truncates an overlong prompt before sending', async () => {
+  let sent;
+  const restore = mockFetchOnce(async (url, opts) => {
+    sent = JSON.parse(opts.body);
+    return { ok: true, status: 200, json: async () => ({ embedding: [0.5, -0.5] }) };
+  });
+  try {
+    const enc = new g.OllamaEncoder({ baseUrl: 'http://127.0.0.1:11434', model: 'nomic-embed-text' });
+    const vec = await enc.embedOne('x'.repeat(100000));
+    assert.equal(vec.length, 2);
+    assert.equal(sent.prompt.length, 24000);
+  } finally {
+    restore();
+  }
+});
+
+test('OllamaEncoder error carries the server body on HTTP 500', async () => {
+  const restore = mockFetchOnce(async () => ({
+    ok: false,
+    status: 500,
+    text: async () => '{"error":"input length exceeds context length"}',
+    json: async () => ({}),
+  }));
+  try {
+    const enc = new g.OllamaEncoder({ baseUrl: 'http://127.0.0.1:11434' });
+    await assert.rejects(enc.embedOne('hello'), (e) => {
+      assert.equal(e.status, 500);
+      assert.match(e.message, /input length exceeds context length/);
+      return true;
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('OpenAIEncoder truncates each batch input before sending', async () => {
+  let sent;
+  const restore = mockFetchOnce(async (url, opts) => {
+    sent = JSON.parse(opts.body);
+    return {
+      ok: true,
+      status: 200,
+      json: async () => ({ data: [{ index: 0, embedding: [0.1] }, { index: 1, embedding: [0.2] }] }),
+    };
+  });
+  try {
+    const enc = new g.OpenAIEncoder({ baseUrl: 'http://127.0.0.1:1234/v1' });
+    const vecs = await enc.embed(['ok', 'y'.repeat(50000)]);
+    assert.equal(vecs.length, 2);
+    assert.equal(sent.input[0], 'ok');
+    assert.equal(sent.input[1].length, 24000);
+  } finally {
+    restore();
+  }
+});

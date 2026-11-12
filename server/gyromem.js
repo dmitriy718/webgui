@@ -329,6 +329,33 @@ function estimateTokens(text) {
   return Math.max(1, Math.ceil(String(text || '').length / 4));
 }
 
+// Embedding models have a finite context (nomic-embed-text: 8192 tokens;
+// text-embedding-3-small: 8191). Ollama answers an overlong embedding
+// prompt with HTTP 500 instead of truncating, so the network encoders
+// truncate to a conservative budget before sending. estimateTokens runs
+// ~4 chars/token, so 6000 estimated tokens (~24k chars) leaves headroom
+// for text that tokenizes denser than 4 chars/token. The offline encoder
+// and the BM25 corpus are NOT truncated — the offline numbers must stay
+// byte-identical to the published run, and BM25 has no context limit.
+const MAX_EMBED_TOKENS = 6000;
+
+function truncateEmbedText(text) {
+  const s = String(text || '');
+  if (estimateTokens(s) <= MAX_EMBED_TOKENS) return s;
+  return s.slice(0, MAX_EMBED_TOKENS * 4);
+}
+
+// Read a short snippet of a failed embedding response so the server's
+// own reason survives (Ollama's 500 otherwise arrives as a bare status).
+async function readErrorBody(res) {
+  try {
+    const t = await res.text();
+    return t ? t.slice(0, 200) : '';
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Offline fallback encoder: deterministic hashed TF embedding.
  * NOT a learned model. Tokens are hashed into buckets with a sign,
@@ -371,14 +398,16 @@ class OllamaEncoder {
   }
 
   async embedOne(text) {
+    const prompt = truncateEmbedText(text);
     const res = await fetch(`${this.baseUrl}/api/embeddings`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: this.model, prompt: String(text || '') }),
+      body: JSON.stringify({ model: this.model, prompt }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {
-      throw Object.assign(new Error(`Ollama embeddings failed: HTTP ${res.status}`), { status: res.status });
+      const detail = await readErrorBody(res);
+      throw Object.assign(new Error(`Ollama embeddings failed: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`), { status: res.status });
     }
     const data = await res.json();
     if (!Array.isArray(data.embedding)) throw new Error('Ollama embeddings: no embedding in response');
@@ -408,11 +437,12 @@ class OpenAIEncoder {
     const res = await fetch(`${this.baseUrl}/v1/embeddings`, {
       method: 'POST',
       headers,
-      body: JSON.stringify({ model: this.model, input: texts.map((t) => String(t || '')) }),
+      body: JSON.stringify({ model: this.model, input: texts.map((t) => truncateEmbedText(t)) }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!res.ok) {
-      throw Object.assign(new Error(`Embeddings failed: HTTP ${res.status}`), { status: res.status });
+      const detail = await readErrorBody(res);
+      throw Object.assign(new Error(`Embeddings failed: HTTP ${res.status}${detail ? ` — ${detail}` : ''}`), { status: res.status });
     }
     const data = await res.json();
     const arr = (data.data || []).sort((a, b) => a.index - b.index);
