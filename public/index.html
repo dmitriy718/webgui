@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebGUI — Local LLM Chat + Aegis Memory</title>
+<link rel="stylesheet" href="/css/app.css">
+<script src="/js/app.js" defer></script>
+</head>
+<body>
+
+<!-- ===================== Login overlay ===================== -->
+<div id="loginOverlay" class="login-overlay hidden" aria-hidden="true">
+  <form id="loginForm" class="login-card" autocomplete="off">
+    <div class="brand-mark lg">◆</div>
+    <h1>WebGUI</h1>
+    <p class="muted">Local LLM chat &middot; Aegis memory</p>
+    <label class="field">
+      <span>Password</span>
+      <input id="loginPassword" type="password" autocomplete="current-password" placeholder="Enter server password" required>
+    </label>
+    <p id="loginError" class="error-text hidden"></p>
+    <button type="submit" id="loginBtn" class="btn primary block">Log in</button>
+    <p class="muted small centered">Protected by the server password (WEBGUI_PASSWORD).</p>
+  </form>
+</div>
+
+<div id="app" class="app">
+  <button id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">☰</button>
+
+  <!-- ===================== Sidebar ===================== -->
+  <aside id="sidebar" class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <div class="brand-text">
+        <div class="brand-name">WebGUI</div>
+        <div class="brand-sub">Local LLM chat &middot; Aegis memory</div>
+      </div>
+    </div>
+
+    <button id="newChatBtn" class="btn primary block">＋ New chat</button>
+
+    <div class="sidebar-section">
+      <div class="sidebar-label">Conversations</div>
+      <input id="convoFilter" class="input" type="search" placeholder="Filter conversations…" aria-label="Filter conversations">
+      <ul id="convoList" class="convo-list"></ul>
+      <div id="convoEmpty" class="empty hidden">No conversations yet.<br>Start a new chat below.</div>
+      <div id="convoLoading" class="empty">Loading…</div>
+    </div>
+
+    <nav class="sidebar-nav" aria-label="Sections">
+      <button data-view="chat" class="nav-item active">💬 <span>Chat</span></button>
+      <button data-view="providers" class="nav-item">🔌 <span>Providers</span></button>
+      <button data-view="knowledge" class="nav-item">📚 <span>Knowledge</span></button>
+      <button data-view="memory" class="nav-item">🧠 <span>Memory</span><span id="memoryNavBadge" class="badge warn hidden"></span></button>
+      <button data-view="mcp" class="nav-item">🧩 <span>MCP servers</span></button>
+      <button data-view="tools" class="nav-item">🛠 <span>Tools</span></button>
+      <button data-view="logs" class="nav-item">📋 <span>Logs</span></button>
+      <button data-view="settings" class="nav-item">⚙️ <span>Settings</span></button>
+    </nav>
+
+    <div class="sidebar-footer">
+      <div id="healthLine" class="health-line">Connecting…</div>
+      <div class="footer-row">
+        <button id="themeToggle" class="btn ghost small">🌙 Dark</button>
+        <button id="logoutBtn" class="btn ghost small">Log out</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== Main ===================== -->
+  <main class="main">
+
+    <!-- ---------- Chat ---------- -->
+    <section id="view-chat" class="view active" aria-label="Chat">
+      <header class="panel-header chat-header">
+        <div class="chat-title-block">
+          <h2 id="chatTitle">New conversation</h2>
+          <div id="chatMeta" class="muted small">Pick a provider and model, then say hello.</div>
+        </div>
+        <div class="chat-controls">
+          <select id="providerSelect" class="input" title="Provider" aria-label="Provider"></select>
+          <select id="modelSelect" class="input" title="Model" aria-label="Model"></select>
+          <button id="chatSettingsToggle" class="btn ghost" aria-expanded="false">⚙️ Chat settings</button>
+        </div>
+      </header>
+
+      <div id="chatSettingsPanel" class="chat-settings hidden">
+        <div class="settings-grid">
+          <label class="field span-2">
+            <span>System prompt</span>
+            <textarea id="systemPromptInput" rows="3" placeholder="Optional system prompt for this conversation…"></textarea>
+          </label>
+          <label class="field">
+            <span>Temperature <output id="temperatureOut">0.7</output></span>
+            <input id="temperatureInput" type="range" min="0" max="2" step="0.05" value="0.7">
+          </label>
+          <label class="field">
+            <span>Top P <output id="topPOut">1</output></span>
+            <input id="topPInput" type="range" min="0" max="1" step="0.05" value="1">
+          </label>
+          <label class="field">
+            <span>Max tokens (0 = model default)</span>
+            <input id="maxTokensInput" type="number" min="0" step="1" value="0">
+          </label>
+          <label class="field">
+            <span>Frequency penalty <output id="frequencyPenaltyOut">0</output></span>
+            <input id="frequencyPenaltyInput" type="range" min="-2" max="2" step="0.05" value="0">
+          </label>
+          <label class="field">
+            <span>Presence penalty <output id="presencePenaltyOut">0</output></span>
+            <input id="presencePenaltyInput" type="range" min="-2" max="2" step="0.05" value="0">
+          </label>
+          <label class="field">
+            <span>Tools mode</span>
+            <select id="toolsModeSelect" class="input">
+              <option value="auto">Auto</option>
+              <option value="native">Native tool calls</option>
+              <option value="text">Text tool protocol</option>
+              <option value="off">Off</option>
+            </select>
+          </label>
+        </div>
+        <div class="field">
+          <span>Knowledge documents attached to this chat</span>
+          <div id="knowledgeAttachList" class="attach-list"><span class="muted small">Loading knowledge base…</span></div>
+        </div>
+        <div class="row-end">
+          <button id="saveChatSettingsBtn" class="btn primary small">Save chat settings</button>
+        </div>
+      </div>
+
+      <div id="messages" class="messages" aria-live="polite"></div>
+      <div id="chatEmpty" class="chat-empty">
+        <div class="chat-empty-mark">◆</div>
+        <h3>Chat with your local models</h3>
+        <p class="muted">Runs against Ollama, LM Studio or any OpenAI-compatible backend on your machine.<br>
+        Attach knowledge documents for hybrid BM25 + GyroMem retrieval, and use 🧠 Memory to inspect what the agent remembers — and why it trusts it.</p>
+      </div>
+
+      <form id="composer" class="composer">
+        <textarea id="composerInput" rows="2" placeholder="Message the model…  (Enter to send · Shift+Enter for a new line · Ctrl/⌘+K for a new chat)" aria-label="Message"></textarea>
+        <div class="composer-actions">
+          <select id="templateSelect" class="input" title="Insert a template" aria-label="Insert a template">
+            <option value="">＋ Insert template…</option>
+          </select>
+          <button type="button" id="stopBtn" class="btn danger hidden">■ Stop</button>
+          <button type="submit" id="sendBtn" class="btn primary">Send ⏎</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- ---------- Providers ---------- -->
+    <section id="view-providers" class="view" aria-label="Providers">
+      <header class="panel-header">
+        <div><h2>Providers</h2><p class="muted small">LLM backends — Ollama, LM Studio, or any OpenAI-compatible API. API keys are write-only and never shown back.</p></div>
+        <button id="addProviderBtn" class="btn primary">＋ Add provider</button>
+      </header>
+      <div id="providerList" class="card-list"></div>
+      <div id="providerEmpty" class="empty hidden">No providers configured.</div>
+    </section>
+
+    <!-- ---------- Knowledge ---------- -->
+    <section id="view-knowledge" class="view" aria-label="Knowledge base">
+      <header class="panel-header">
+        <div><h2>Knowledge base</h2><p class="muted small">Documents are chunked, indexed into GyroMem memory (origin: user), and retrieved with hybrid BM25 + geodesic search.</p></div>
+        <div class="row">
+          <button id="uploadToggleBtn" class="btn primary">＋ Upload document</button>
+        </div>
+      </header>
+      <div id="uploadPanel" class="panel-card hidden">
+        <h3>Upload — paste text</h3>
+        <div class="settings-grid">
+          <label class="field"><span>Title *</span><input id="kbTitle" class="input" type="text" placeholder="Document title"></label>
+          <label class="field"><span>Source (optional)</span><input id="kbSource" class="input" type="text" placeholder="e.g. notes.txt"></label>
+          <label class="field span-2"><span>Content *</span><textarea id="kbContent" rows="8" placeholder="Paste the document text here…"></textarea></label>
+        </div>
+        <div class="row-end"><button id="kbUploadJsonBtn" class="btn primary">Upload text</button></div>
+        <hr class="divider">
+        <h3>Upload — file</h3>
+        <div class="row">
+          <input id="kbFileInput" type="file" accept=".txt,.md,.markdown,.json,.csv,.log,text/*">
+          <button id="kbUploadFileBtn" class="btn">Upload file</button>
+        </div>
+        <p class="muted small">Text files up to 8 MB. The file name becomes the title unless you set one above.</p>
+      </div>
+      <div class="search-row">
+        <input id="kbSearchInput" class="input" type="search" placeholder="Search the knowledge base (hybrid retrieval)…">
+        <button id="kbSearchBtn" class="btn">Search</button>
+      </div>
+      <div id="kbSearchResults" class="search-results hidden"></div>
+      <div id="knowledgeList" class="card-list"></div>
+      <div id="knowledgeEmpty" class="empty hidden">No documents yet. Upload one to give the model something to remember.</div>
+    </section>
+
+    <!-- ---------- Memory ---------- -->
+    <section id="view-memory" class="view" aria-label="Memory">
+      <header class="panel-header">
+        <div><h2>Memory — Aegis / GyroMem</h2><p class="muted small">Curvature-adaptive memory with the five Mnemodynamics laws: Rent, Inference, Reconsolidation, Relaxation, Authority Non-Creation — plus the epistemic immune system.</p></div>
+        <button id="memoryRefreshBtn" class="btn">↻ Refresh</button>
+      </header>
+
+      <div id="memoryStats" class="stat-grid"></div>
+
+      <div class="panel-card">
+        <div class="row wrap">
+          <button id="runScenariosBtn" class="btn primary">▶ Run theory scenarios</button>
+          <button id="dreamBtn" class="btn">💤 Dream (consolidate)</button>
+          <button id="relaxBtn" class="btn">🌙 Relax</button>
+          <button id="ledgerToggleBtn" class="btn ghost">📜 Audit ledger</button>
+          <span id="memoryActionStatus" class="muted small"></span>
+        </div>
+        <div id="scenarioReport" class="scenario-report hidden"></div>
+      </div>
+
+      <div class="panel-card">
+        <div class="row wrap">
+          <select id="memoryStatusFilter" class="input" aria-label="Filter by status">
+            <option value="">All statuses</option>
+            <option value="live">Live</option>
+            <option value="quarantined">Quarantined</option>
+            <option value="deleted">Deleted</option>
+          </select>
+          <label class="check"><input id="memoryFlaggedOnly" type="checkbox"> Flagged only</label>
+          <input id="memorySearchInput" class="input grow" type="search" placeholder="Filter records by text…">
+          <select id="memoryLimitSelect" class="input" aria-label="Limit">
+            <option value="50">50 records</option>
+            <option value="100" selected>100 records</option>
+            <option value="500">500 records</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="memoryTable">
+            <thead><tr>
+              <th>Content</th><th>Origin</th><th>Act</th><th>λ</th><th>Avail.</th><th>Uses</th><th>Status</th><th>Updated</th><th></th>
+            </tr></thead>
+            <tbody id="memoryTableBody"></tbody>
+          </table>
+        </div>
+        <div id="memoryEmpty" class="empty hidden">No memory records match. Upload a knowledge document to create some.</div>
+      </div>
+
+      <div id="ledgerPanel" class="panel-card hidden">
+        <h3>Audit ledger <span class="muted small">— hash-chained, newest first</span></h3>
+        <div class="row wrap">
+          <input id="ledgerLimitInput" class="input" type="number" min="1" max="1000" value="100" style="width:110px" aria-label="Ledger limit">
+          <button id="ledgerRefreshBtn" class="btn small">Refresh ledger</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Time</th><th>Event</th><th>Record</th><th>Hash</th><th>Detail</th></tr></thead>
+            <tbody id="ledgerTableBody"></tbody>
+          </table>
+        </div>
+        <div id="ledgerEmpty" class="empty hidden">No ledger entries yet.</div>
+      </div>
+    </section>
+
+    <!-- ---------- MCP ---------- -->
+    <section id="view-mcp" class="view" aria-label="MCP servers">
+      <header class="panel-header">
+        <div><h2>MCP servers</h2><p class="muted small">Model Context Protocol servers extend the model with external tools. Registration failures are logged, not fatal.</p></div>
+        <button id="mcpRegisterToggleBtn" class="btn primary">＋ Register server</button>
+      </header>
+      <div id="mcpFormPanel" class="panel-card hidden">
+        <div class="settings-grid">
+          <label class="field"><span>Server id *</span><input id="mcpId" class="input" type="text" placeholder="e.g. filesystem"></label>
+          <label class="field"><span>Transport *</span>
+            <select id="mcpTransport" class="input"><option value="stdio">stdio</option><option value="http">http</option></select>
+          </label>
+          <label class="field" id="mcpCommandField"><span>Command *</span><input id="mcpCommand" class="input" type="text" placeholder="e.g. npx -y @modelcontextprotocol/server-filesystem"></label>
+          <label class="field" id="mcpArgsField"><span>Arguments (comma separated)</span><input id="mcpArgs" class="input" type="text" placeholder="/home/user/docs, --verbose"></label>
+          <label class="field span-2" id="mcpEnvField"><span>Environment (JSON object)</span><textarea id="mcpEnv" rows="2" placeholder='{"API_KEY": "…"}'></textarea></label>
+          <label class="field span-2 hidden" id="mcpUrlField"><span>URL *</span><input id="mcpUrl" class="input" type="text" placeholder="http://localhost:8000/mcp"></label>
+        </div>
+        <div class="row-end"><button id="mcpRegisterBtn" class="btn primary">Register</button></div>
+      </div>
+      <div id="mcpList" class="card-list"></div>
+      <div id="mcpEmpty" class="empty hidden">No MCP servers registered.</div>
+      <div class="panel-card">
+        <div class="row between"><h3>MCP log</h3><button id="mcpLogRefreshBtn" class="btn small">Refresh</button></div>
+        <pre id="mcpLog" class="log-box">No log entries yet.</pre>
+      </div>
+    </section>
+
+    <!-- ---------- Tools ---------- -->
+    <section id="view-tools" class="view" aria-label="Tools">
+      <header class="panel-header">
+        <div><h2>Tools</h2><p class="muted small">Built-in tools plus tools exposed by connected MCP servers — everything the model can call.</p></div>
+        <button id="toolsRefreshBtn" class="btn">↻ Refresh</button>
+      </header>
+      <div id="toolsList" class="card-list"></div>
+      <div id="toolsEmpty" class="empty hidden">No tools available.</div>
+    </section>
+
+    <!-- ---------- Logs ---------- -->
+    <section id="view-logs" class="view" aria-label="Logs">
+      <header class="panel-header">
+        <div><h2>Logs</h2><p class="muted small">Server log, newest first.</p></div>
+        <div class="row">
+          <select id="logLevelFilter" class="input" aria-label="Filter by level">
+            <option value="">All levels</option>
+            <option value="info">info</option>
+            <option value="warn">warn</option>
+            <option value="error">error</option>
+          </select>
+          <input id="logLimitInput" class="input" type="number" min="1" max="1000" value="100" style="width:110px" aria-label="Log limit">
+          <label class="check"><input id="logAutoRefresh" type="checkbox"> Auto-refresh (5s)</label>
+          <button id="logsRefreshBtn" class="btn">↻ Refresh</button>
+        </div>
+      </header>
+      <div class="table-wrap">
+        <table class="table">
+          <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>Message</th><th>Provider / Model</th></tr></thead>
+          <tbody id="logsTableBody"></tbody>
+        </table>
+      </div>
+      <div id="logsEmpty" class="empty hidden">No log entries yet.</div>
+    </section>
+
+    <!-- ---------- Settings ---------- -->
+    <section id="view-settings" class="view" aria-label="Settings">
+      <header class="panel-header">
+        <div><h2>Settings</h2><p class="muted small">Global defaults for new chats, the theme, and the GyroMem embedding model.</p></div>
+        <button id="settingsSaveBtn" class="btn primary">Save settings</button>
+      </header>
+      <div class="panel-card">
+        <h3>Appearance &amp; defaults</h3>
+        <div class="settings-grid">
+          <label class="field"><span>Theme</span>
+            <select id="settingTheme" class="input"><option value="dark">Dark</option><option value="light">Light</option></select>
+          </label>
+          <label class="field"><span>Default provider</span><select id="settingDefaultProvider" class="input"></select></label>
+          <label class="field"><span>Default model</span><input id="settingDefaultModel" class="input" type="text" placeholder="e.g. qwen3:8b"></label>
+          <label class="field"><span>Tools mode</span>
+            <select id="settingToolsMode" class="input">
+              <option value="auto">Auto</option><option value="native">Native tool calls</option>
+              <option value="text">Text tool protocol</option><option value="off">Off</option>
+            </select>
+          </label>
+          <label class="field"><span>Temperature <output id="settingTempOut">0.7</output></span><input id="settingTemperature" type="range" min="0" max="2" step="0.05" value="0.7"></label>
+          <label class="field"><span>Top P <output id="settingTopPOut">1</output></span><input id="settingTopP" type="range" min="0" max="1" step="0.05" value="1"></label>
+          <label class="field"><span>Max tokens (0 = model default)</span><input id="settingMaxTokens" type="number" min="0" step="1" value="0"></label>
+          <label class="field"><span>Frequency penalty <output id="settingFreqOut">0</output></span><input id="settingFrequencyPenalty" type="range" min="-2" max="2" step="0.05" value="0"></label>
+          <label class="field"><span>Presence penalty <output id="settingPresenceOut">0</output></span><input id="settingPresencePenalty" type="range" min="-2" max="2" step="0.05" value="0"></label>
+        </div>
+      </div>
+      <div class="panel-card">
+        <h3>Memory — GyroMem embedding model</h3>
+        <div class="settings-grid">
+          <label class="check"><input id="settingMemoryEnabled" type="checkbox" checked> Memory enabled</label>
+          <label class="field"><span>Embedding provider</span><select id="settingMemoryProvider" class="input"></select></label>
+          <label class="field"><span>Embedding model</span><input id="settingEmbeddingModel" class="input" type="text" placeholder="nomic-embed-text"></label>
+        </div>
+        <p class="muted small">Changing the embedding provider or model re-resolves the encoder and re-indexes the knowledge base. For Ollama, pull the model first: <code>ollama pull nomic-embed-text</code>.</p>
+      </div>
+      <div class="panel-card">
+        <div class="row between"><h3>Prompt templates</h3><button id="templateAddBtn" class="btn small">＋ New template</button></div>
+        <div id="templateList" class="card-list"></div>
+        <div id="templateEmpty" class="empty hidden">No templates yet.</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ===================== Modal & toasts ===================== -->
+<div id="modalRoot" class="modal-root hidden">
+  <div class="modal-backdrop" data-close-modal></div>
+  <div id="modalBox" class="modal" role="dialog" aria-modal="true"></div>
+</div>
+<div id="toasts" class="toasts" aria-live="polite"></div>
+
+</body>
+</html>

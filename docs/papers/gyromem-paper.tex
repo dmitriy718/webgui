@@ -1,0 +1,997 @@
+% GyroMem: Curvature-Adaptive Memory for Long-Horizon LLM Agents
+% Author: Dmitriy Zagoruyko
+% A theory paper with pre-registered experimental proposals. No empirical
+% claims are made for GyroMem itself; all performance figures cited refer
+% to previously published systems and are attributed accordingly.
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{mathtools}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage[margin=1in]{geometry}
+\usepackage{caption}
+\usepackage{xcolor}
+
+\hypersetup{colorlinks=true,linkcolor=blue!60!black,citecolor=blue!60!black,urlcolor=blue!60!black}
+
+\newtheorem{proposition}{Proposition}
+\newtheorem{definition}{Definition}
+\newtheorem{remark}{Remark}
+
+\newcommand{\M}{\mathcal{M}}
+\newcommand{\B}{\mathbb{B}}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\Hyp}{\mathbb{H}}
+\newcommand{\Sph}{\mathbb{S}}
+
+\title{GyroMem: Curvature-Adaptive Memory for Long-Horizon LLM Agents}
+\author{Dmitriy Zagoruyko\thanks{Independent Research.}\thanks{AI assistance disclosure: an AI assistant (Ember, Muse Spark) was used for literature synthesis, drafting, and editing. The author reviewed, verified, and takes full responsibility for all content.}}
+\date{October 2026, revised November 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Long-horizon LLM agents need memory that persists across sessions, organizes
+itself under use, forgets gracefully, and serves retrieval at low cost.
+The last year of research has converged on multi-relational memory graphs,
+retrieval-driven consolidation, and the separation of memory control from
+generation. Yet the surveyed systems predominantly store memories as
+Euclidean vectors, compare them with cosine similarity, and index them
+with Euclidean approximate nearest-neighbor structures. Curved geometry has touched retrieval-augmented generation \cite{hyperbolicrag} and unreviewed engineering projects, but not---to our knowledge---the full lifecycle of agent memory with formal mechanisms. This paper proposes
+\textbf{GyroMem}, a theory of agentic memory in which memories live on a
+\emph{curved} manifold: a product of hyperbolic, spherical, and Euclidean
+components with curvatures to be fixed per memory region in the specification.
+Retrieval becomes geodesic distance; consolidation becomes geodesic
+transport of memory points toward useful queries, with confidence-bounded
+step sizes and a stability sketch for the hyperbolic component only;
+forgetting becomes geometric drift of availability rather than deletion;
+and the transient (KV-cache) and persistent (external store) tiers are
+managed under a single geometric budget. We formalize the theory, state the
+exact gyrovector operations it requires, state a stability sketch for the
+reconsolidation update, and pre-register a falsification-oriented
+experimental program---including explicit kill criteria---under which the
+theory should be abandoned or revised. This is a theory paper: we claim no
+empirical results for GyroMem itself. Our contribution is a geometric
+reframing of agentic memory, stated precisely enough to falsify---implementation
+parameters are named as specification parameters to be fixed in the
+companion specification (see the specification note in
+\S\ref{sec:manifold})---plus an honest accounting of where it is most
+likely to fail.
+\end{abstract}
+
+\noindent\textbf{Keywords:} agentic memory, hyperbolic geometry, product
+manifolds, retrieval-augmented generation, memory consolidation, geodesic
+reconsolidation
+
+%----------------------------------------------------------------------
+\section{Introduction}
+%----------------------------------------------------------------------
+
+An LLM agent that cannot remember is an amnesiac savant: brilliant within a
+context window, a stranger to everything before it. As agents take on
+long-horizon work---software projects spanning weeks, personal assistants
+spanning years, scientific collaborators spanning careers---memory stops
+being a feature and becomes the substrate. The research community has
+responded with remarkable energy: in a single recent month (September--October
+2026), at least twelve papers advanced agentic memory, from control-plane
+architectures to KV-cache eviction to consolidation governance
+\cite{jevmem,jam,realm,actkv,epistemics,mhr,engramrag,biomem,mrvq,agentkv,collabmem,simplearm}.
+
+Stepping back from this burst of activity, a pattern---and a conspicuous
+absence---emerges. The pattern: memory is becoming a \emph{closed-loop
+lifecycle} rather than a store. Retrieval rewires the graph
+\cite{realm,engramrag}; context is constructed just-in-time at query time
+rather than pre-compressed \cite{jam}; memory control is being split off
+from generation into cheaper dedicated machinery \cite{jevmem}; forgetting
+is becoming a first-class, principled design variable \cite{engramrag,
+epistemics}. The absence: \emph{the geometry rarely changed.} Predominantly,
+the systems surveyed store memories as Euclidean vectors, score them
+with cosine similarity (or fusions thereof), and index them with
+Euclidean ANN structures (HNSW, PQ). The exceptions---graph systems, a
+page-store, and hash-code indexes---are named where the survey qualifies
+this claim below. The vector mathematics of memory---the space itself
+in which memories live, move, and decay---has been treated as fixed
+plumbing while all the innovation happened one level up.
+
+This paper asks whether the plumbing is the problem. Agent memory is
+simultaneously \emph{hierarchical} (identity $\to$ preferences $\to$
+episodes $\to$ raw facts), \emph{relational} (entities linked in cycles and
+mutual reference), and \emph{flat} (surface feature similarity). Euclidean
+space is a poor host for the first of these: trees embed into Euclidean
+space only with severe distortion, while hyperbolic space accommodates them
+with arbitrarily low distortion \cite{nickel2017}. The mismatch is not
+aesthetic. If memories live in the wrong geometry, then every downstream
+operation---retrieval ranking, consolidation updates, forgetting
+schedules---must compensate with heuristics, thresholds, and expensive
+LLM-driven repairs for what the geometry gets wrong for free.
+
+\textbf{Thesis.} \emph{Agentic memory should live on a curved manifold: a
+product of hyperbolic, spherical, and Euclidean components with
+per-region curvature to be fixed in the specification. Retrieval is geodesic
+distance. Consolidation is geodesic transport. Forgetting is geometric
+drift of availability. The resulting system may be cheaper than LLM-driven
+memory surgery and more stable than heuristic decay; both claims are
+hypotheses tested by the pre-registered program in
+\S\ref{sec:experiments}.}
+
+We name this theory \textbf{GyroMem}, after the gyrovector spaces that
+furnish its algebra. Our contributions are:
+
+\begin{enumerate}[leftmargin=*]
+\item A formal specification of a product-manifold memory space for LLM
+agents, with explicit formation (exponential map), retrieval (geodesic
+distance), consolidation (confidence-bounded geodesic transport),
+promotion (radial motion), and forgetting (availability drift) operators.
+\item A stability sketch for the reconsolidation update on the hyperbolic
+component, giving the kind of convergence argument that usage-driven
+plasticity in current systems lacks.
+\item A unification of the transient (KV-cache) and persistent (external)
+memory tiers under one geometric budget, addressing a split no current
+system bridges.
+\item A pre-registered, falsification-oriented experimental program with
+named hypotheses, ablations that isolate each geometric claim, and
+explicit kill criteria---so the theory can fail fast and honestly.
+\item A candid failure analysis: where the theory is most likely wrong,
+what prior art constrains it, and what a negative result would still teach.
+\end{enumerate}
+
+We emphasize what this paper is \emph{not}: it reports no experiments on
+GyroMem, claims no benchmark victories, and invents no data. It is a theory
+paper written \emph{before} the experiments, in the open, so that the
+subsequent empirical program---pass or fail---can be judged against
+pre-committed predictions rather than retrofitted narratives.
+
+%----------------------------------------------------------------------
+\section{Background and Related Work}
+%----------------------------------------------------------------------
+
+\subsection{Agentic memory systems: the state of play}
+
+The recent literature clusters into several lines. \textbf{Control-plane
+architectures} separate memory decisions from generation: Jev-Mem routes
+all high-frequency memory decisions (typing, routing, budget allocation,
+traversal, stopping) through a lightweight typed-probabilistic controller,
+reserving the LLM for synthesis, reaching 0.777 on LoCoMo as reported in
+\cite{jevmem} (executor, judge, and confidence interval not restated
+here; the figure is an LLM-judge score, GPT-4o-mini, as reported via
+secondary summaries).
+\textbf{Just-in-time memory} rejects ahead-of-time compression: JAM preserves raw histories in a hierarchical
+page-store and performs runtime agentic research per query, with a 4B model
+outperforming 7--14B trained memory agents across most settings as reported
+in \cite{jam}---note the qualifier: the construction is query-conditioned,
+not verbatim preservation of every history.
+\textbf{Retrieval-driven reconsolidation} treats recall as a write event:
+REALM applies LLM-driven edge surgery (add/strengthen/weaken with
+confidence-bounded updates) on a heterogeneous cognitive graph after
+retrieval \cite{realm}; EngramRAG implements a waking/dreaming cycle with
+Hebbian edge plasticity, usage-modulated PageRank, and topology-aware decay
+\cite{engramrag}. \textbf{KV-cache management} optimizes the transient
+tier: ActKV exploits stable action-critical attention patterns
+\cite{actkv}, while AgentKV models the phase-mixture of query subspaces
+\cite{agentkv}. \textbf{Index elasticity} arrives via Matryoshka-nested
+codes serving multiple operating points from one artifact
+\cite{mhr,mrvq,kusupati2022}.
+\textbf{Governance and evaluation} mature: the Epistemics program exposes
+degenerate forgetting and argues that consolidation-quality metrics do not
+predict real transfer, proposing governed consolidation with
+poison-resistance, reversibility, and auditability \cite{epistemics};
+no correlation figure is quoted here, the reported figure having not been
+verified for this paper, and the Epistemics experiments were designed,
+executed, and adversarially verified by the PRIMA multi-agent system with
+certain mechanism internals held under controlled release---a
+reproducibility limitation on every Epistemics-derived claim in this
+paper;
+Bio-Memory conditions retrieval on biometric identity \cite{biomem}.
+
+Predominant in the surveyed wave, though not universal---REALM and
+EngramRAG are graph systems, JAM is a page-store, MHR/MRVQ use hash
+codes---are Euclidean embeddings scored by cosine similarity and indexed
+by Euclidean ANN. Within this wave, the geometry is rarely varied, rarely
+ablated, and rarely questioned as a design variable.
+
+\subsection{Hyperbolic representation learning}
+
+The case for non-Euclidean representation is well established outside
+agentic memory. Nickel and Kiela showed that hierarchical data---taxonomies,
+trees, entailment cones---embeds into the Poincar\'e ball with lower
+distortion than into Euclidean space of the same dimension in their
+experiments, because volume in hyperbolic space grows exponentially with
+radius, matching the exponential growth of tree nodes with depth
+\cite{nickel2017}. Ganea,
+B\'ecigneul, and Hofmann extended the toolkit to hyperbolic neural
+networks, defining M\"obius versions of addition, matrix multiplication,
+and recurrent updates, with closed-form exponential and logarithmic maps
+\cite{ganea2018}. Gu et al.\ generalized further to \emph{product
+manifolds}---Cartesian products of hyperbolic, spherical, and Euclidean
+components with learned curvatures---showing that heterogeneous data is
+best served by heterogeneous geometry on static embedding tasks
+\cite{gu2019}; the extrapolation from static embedding tasks to online
+agent memory is this paper's hypothesis, not Gu et al.'s finding. These results are our
+direct mathematical foundation; we apply them to the full lifecycle of
+\emph{agent} memory rather than to static embedding tasks. The nearest
+existing efforts are discussed in \S\ref{sec:nearest}.
+
+\subsection{Nearest-neighbor search beyond Euclidean space}
+\label{sec:related-ann}
+
+If memories live on a manifold, retrieval needs manifold-aware search.
+Hyperbolic nearest-neighbor methods exist but are immature relative to
+FAISS/HNSW. Graph-based search has been reported to enjoy \emph{lower} time
+complexity in hyperbolic than in Euclidean space in the dense regime
+\cite{prokhorenkova2022}---a result reported in that paper, not verified
+for this paper---and a hyperbolic-native LSH construction has been
+reported recently \cite{deng2026}---likewise not verified here. The working engineering
+pattern in the surveyed literature is two-stage Euclidean pre-filtering with hyperbolic reranking. Tangent-space approximations that map neighborhoods into the
+tangent plane at the query point complete the toolkit. We treat ANN on the
+product manifold as an engineering problem with known partial solutions,
+not as a solved one---a risk we carry explicitly into \S\ref{sec:failure}.
+
+\subsection{Curved geometry for retrieval and memory: the nearest neighbors}
+\label{sec:nearest}
+
+Cao et al.\ introduce HyperbolicRAG, embedding graph-RAG nodes in a shared
+Poincar\'e manifold with mutual-ranking fusion of Euclidean and hyperbolic
+signals, reported to improve multi-hop QA over Euclidean baselines
+\cite{hyperbolicrag}---no dataset, model, margin, or baseline is restated
+here, none having been verified for this paper---but it is retrieval-only: no memory lifecycle, no
+reconsolidation, no forgetting, single curvature. Chakrabarti projects
+pretrained embeddings into the Lorentz model for edge-device RAG reranking
+\cite{chakrabarti2026}; no result is quoted here. No verified
+product-manifold agent-memory system was found in the surveyed
+literature: the one candidate known to us, a GitHub engineering project
+implementing long-term agent memory on a product manifold, could not be
+verified---its repository URL returned an error when checked in November
+2026---and none of its reported claims is relied on here. To our knowledge, no peer-reviewed
+work combines product-manifold geometry with retrieval-driven
+reconsolidation, availability drift, and unified tier budgeting for
+agent memory. GyroMem's contribution is therefore (i) the first formal
+treatment of curved-geometry agent memory, with (ii) three mechanisms
+absent from all prior art we found: geodesic reconsolidation with a
+contraction-stability argument for the hyperbolic component,
+curvature-parameterized availability drift, and tier-unified budgeting---plus (iii) a pre-registered
+falsification program. The novelty claim is hedged: it is a claim about
+the surveyed literature, and a single counterexample would narrow it.
+
+Two newer results condition the program. A controlled diagnostic-task
+test of geometric memory features found no added predictive value over
+question-difficulty and system-identity baselines ($\Delta$AUROC $+0.002$,
+95\% CI $[-0.010, 0.014]$, pooled AUROC 0.640 vs.\ 0.655 difficulty
+baseline, $n = 2{,}367$; on single-session-assistant questions the
+geometric classifier reached 0.841 vs.\ 0.826 for system identity alone)
+\cite{geometry}---but it tested embedding proximity on a diagnostic task,
+not curved or product-manifold geometry as a retrieval policy, so it
+constrains the diagnostic claim, not the retrieval-policy claim tested in
+H1. And explicit structure keeps winning where geometry is untested:
+TIDER's temporal constraint channels beat semantic retrieval on LifeBench
+and LoCoMo \cite{tider}, and an anti-persistence update rule that deletes
+error-reproducing memories rather than reinforcing them is the strongest
+rival updater to the transport rule of \S\ref{sec:reconsolidation}
+\cite{antipersistence}. Both are named baselines in the experimental
+program.
+
+\subsection{Neuroscience: complementary systems and reconsolidation}
+
+Two ideas from neuroscience recur, usually as loose metaphor, across the
+agent-memory literature; we attempt to make them literal. Complementary
+Learning Systems theory holds that the hippocampus (fast, episodic) and
+neocortex (slow, semantic) consolidate via replay \cite{mcclelland1995}---the
+template for waking/dreaming splits \cite{engramrag}. Memory
+reconsolidation holds that recalled memories enter a labile state in which
+they can be strengthened, weakened, or rewritten \cite{nader2000}---the
+template for REALM's post-retrieval updates \cite{realm}. GyroMem's
+geodesic transport is reconsolidation made geometric: the labile state is
+motion along the manifold, and its bounds are step sizes, not prompts.
+
+\subsection{The evaluation problem}
+
+A theory of memory is only as good as its measures, and the measures are
+troubled. LoCoMo with LLM-as-a-judge dominates evaluation, yet the
+Epistemics program reports that well-constructed consolidation-quality
+scores do not predict real transfer accuracy \cite{epistemics}, and
+retrieval-metric wins need not transfer to downstream generation
+\cite{engramrag}. Any honest experimental program must therefore measure
+\emph{transfer}---whether consolidated memory changes what the agent can
+do---not just recall. We build this lesson into our pre-registration
+(\S\ref{sec:experiments}).
+
+%----------------------------------------------------------------------
+\section{Motivation: four gaps}
+%----------------------------------------------------------------------
+
+From the survey above we distill four gaps that GyroMem is designed to
+close. Each is a falsifiable claim about the literature, and each maps to
+one component of the theory.
+
+\textbf{Gap 1: the geometry is fixed and unexamined.} No system in the
+surveyed wave varies the embedding geometry as a design variable; cosine similarity on Euclidean
+vectors is predominant there. Curved geometry exists at the edges---retrieval-only
+systems \cite{hyperbolicrag,chakrabarti2026}---but not as a formal, evaluated theory of the memory lifecycle. Yet agent memory is conspicuously hierarchical, the exact regime
+where hyperbolic geometry dominates in static embedding experiments \cite{nickel2017}. A controlled diagnostic-task test found geometric features add nothing over difficulty and system-identity baselines \cite{geometry}; H1 answers it by testing geometry as a retrieval policy, not a diagnostic. \emph{Component:}
+product-manifold memory space (\S\ref{sec:manifold}).
+
+\textbf{Gap 2: plasticity without theory.} Usage-driven updates---Hebbian
+rules, topology-aware decay, LLM graph surgery---are hand-tuned or
+prompt-driven, with no convergence or stability analysis. Contrast the
+rigorous capacity theory of classical associative memory. \emph{Component:}
+geodesic reconsolidation with a contraction argument (\S\ref{sec:reconsolidation}).
+
+\textbf{Gap 3: two tiers, no joint management.} KV-cache systems
+\cite{actkv,agentkv} and external-memory systems \cite{jevmem,realm,jam}
+optimize disjoint budgets though they compete for the same serving
+resources. \emph{Component:} unified geometric budget (\S\ref{sec:tiers}).
+
+\textbf{Gap 4: forgetting as an afterthought.} Decay is wall-clock
+exponential (EngramRAG's own time term notwithstanding, pure wall-clock
+decay is the wrong retention rule \cite{engramrag}), thresholded
+hand-tuning, or---worst---a budget release valve that destroys load-bearing
+memories \cite{epistemics}. \emph{Component:} forgetting as availability
+drift (\S\ref{sec:forgetting}).
+
+%----------------------------------------------------------------------
+\section{The GyroMem Theory}
+%----------------------------------------------------------------------
+
+\subsection{The product-manifold memory space}
+\label{sec:manifold}
+
+\begin{definition}[Memory manifold]
+Let
+\begin{equation}
+\M = \Hyp^{a}_{-c_h} \times \Sph^{b}_{c_s} \times \R^{c},
+\end{equation}
+the Cartesian product of a hyperbolic component of dimension $a$ and
+curvature $-c_h < 0$, a spherical component of dimension $b$ and curvature
+$c_s > 0$, and a Euclidean component of dimension $c$. Each memory $m$ is a
+point $m = (m_h, m_s, m_e) \in \M$. Curvatures $c_h, c_s$ and the weights
+$\alpha_h, \alpha_s, \alpha_e$ in the distance below are \emph{to be fixed} in
+the specification---chosen per region at design time, not learned during
+operation---following the product-manifold form of \cite{gu2019}, whose
+learned-curvature result is on static embedding tasks. This paper states
+one manifold, not a family that changes under use.
+\end{definition}
+
+\begin{remark}[Specification status]
+References to ``the specification'' in this paper mean the companion
+GyroMem specification document, to be released with the prototype (see
+the engineering roadmap). The specification does not yet exist. It will
+fix the implementation parameters this paper names but does not value:
+the component dimensions $a, b, c$; the curvature values per region; the
+antipode tie-break rule; the formation-clustering algorithm and
+parameters; the radial-regularizer radius targets and the abstraction
+labeling procedure; the drift function $\lambda(u)$ and the drift rates;
+the horizon radius $r_H$; the skill threshold
+$r_{\mathrm{skill}}$; the tier-utility estimator; the just-in-time
+initial radius $r_0$, threshold $\tau$, and candidate-set cap; and the
+transient-tier timescale. Until the specification exists, two
+implementers following this paper alone would build different systems.
+The implementability claim of this paper is therefore limited to
+falsifiability, as stated in the Abstract: every ``to be fixed in the
+specification'' in this paper names a parameter to be fixed there before
+any implementation, and no implementation claim in this paper rests on a
+value the paper does not state.
+\end{remark}
+
+The three components have distinct duties. The \textbf{hyperbolic
+component} hosts hierarchical content: identity facts near the origin,
+preferences further out, episodes near the boundary---so that abstraction
+level is literally radial position. The \textbf{spherical component}
+hosts relational content: entity--entity associations and temporal cycles,
+where closure (returning to the start) is natural. The \textbf{Euclidean
+component} hosts flat featural content where cosine-style similarity is
+already adequate. Distance on $\M$ is the weighted product distance
+\begin{equation}
+d_{\M}(p, q)^2 = \alpha_h\, d_{-c_h}(p_h, q_h)^2 + \alpha_s\, d_{c_s}(p_s, q_s)^2 + \alpha_e\, \|p_e - q_e\|^2,
+\end{equation}
+with fixed non-negative weights $\alpha_h, \alpha_s, \alpha_e$ (absorbed
+into the component scales; we set $\alpha_h = \alpha_s = \alpha_e = 1$ in
+the specification and vary only the curvatures across regions).
+A \emph{region} is a subset of memories sharing curvature parameters and
+weights (e.g., ``user preferences,'' ``project episodes''); regions are
+formed by clustering encoder vectors \emph{before} formation, in Euclidean
+space, by a clustering procedure whose algorithm and parameters are to be fixed
+in the specification. The product distance above is the single distance
+on $\M$: there is no separate cross-region rule, and no region-local
+metric. Regions may split or merge only by re-clustering under the
+dreaming consolidation described in \S\ref{sec:forgetting}, under criteria
+to be fixed in the specification.
+
+\begin{remark}[Why products, not pure hyperbolic]
+Pure hyperbolic memory would repeat the monoculture it criticizes.
+Relational cycles embed poorly in hyperbolic space and naturally in
+spherical space; flat features need no curvature at all. The product
+follows \cite{gu2019}: let the data's heterogeneity choose the geometry.
+If ablations show one component dominates, the theory simplifies---that
+is a feature, not a retreat.
+\end{remark}
+
+\subsection{Memory formation: the exponential map}
+\label{sec:formation}
+
+New memories arrive as Euclidean vectors (encoder outputs). Formation maps
+them onto $\M$ via the exponential map at the origin of each component.
+The encoder vector $v$ is split into components $v = (v_h, v_s, v_e)$ by a
+fixed linear split whose dimensions $a, b, c$ are to be fixed in the
+specification. For the Poincar\'e ball $\B^n_{c}$ of curvature $-c$, with M\"obius
+addition $\oplus_c$ (formulary in Appendix~\ref{app:formulary}),
+\begin{equation}
+\exp^c_0(v) = \tanh(\sqrt{c}\,\|v\|)\,\frac{v}{\sqrt{c}\,\|v\|},
+\qquad
+\log^c_0(y) = \operatorname{artanh}(\sqrt{c}\,\|y\|)\,\frac{y}{\sqrt{c}\,\|y\|}.
+\end{equation}
+The spherical component is formed by normalizing the encoder slice to the
+unit sphere, $m_s = v_s / \|v_s\|$, with a fixed north-pole base point;
+spherical exponential and logarithmic maps are the standard great-circle
+maps at the base point, and antipodal points (distance $\pi$) are resolved
+by a fixed tie-break rule to be fixed in the specification. The product
+exponential and logarithmic maps are component-wise: $\exp_m$ applies the
+component maps at $m_h, m_s, m_e$ respectively, and likewise for $\log_m$.
+The norm of the pre-image $v$ controls radial placement: small $\|v\|$
+lands near the origin (abstract), large $\|v\|$ near the boundary
+(specific). Formation therefore requires a \emph{calibrated} encoder norm,
+which we obtain by training the encoder with a radial regularizer that
+aligns $\|v\|$ with an abstraction label (identity $<$ preference $<$
+episodic $<$ verbatim). The regularizer loss is stated explicitly:
+$L_{\mathrm{rad}} = (\|v_h\| - r(\mathrm{label}))^2$ with increasing radius
+targets $r(\cdot)$ to be fixed in the specification. The abstraction labels come
+from a human or LLM-judge labeling procedure to be stated in the specification;
+H2 therefore tests the judge and the geometry jointly, and that confound
+is stated, not hidden. This is the one trained component of the otherwise
+training-free theory, and its necessity is itself a falsifiable claim
+(H2 in \S\ref{sec:experiments}).
+
+\subsection{Retrieval as geodesic distance}
+\label{sec:retrieval}
+
+\begin{definition}[GyroMem retrieval]
+Given query $q \in \M$ (formed as in \S\ref{sec:formation}), return the
+$k$ memories minimizing $d_{\M}(q, m)$ under the single product distance.
+Per-region top-$k$ union with reciprocal-rank fusion is an optional
+variant, with the fusion rule $s(m) = \sum_r 1/(k_0 + \mathrm{rank}_r(m))$,
+$k_0 = 60$, stated here; the default is the single ranking.
+\end{definition}
+
+Hyperbolic distance expands near the boundary of the ball: with
+$\rho = \sqrt{c}\,\|v\| \in [0,1)$ the normalized radius of $v$,
+$d_c(0,v) = \frac{1}{\sqrt{c}}\ln\frac{1+\rho}{1-\rho}$, so
+$d_c(0,v) \approx \frac{1}{\sqrt{c}}\ln\frac{2}{1-\rho}$ as
+$\rho \to 1$ (natural logarithm; the ball radius in unnormalized
+coordinates is $1/\sqrt{c}$). A query formed at the abstraction
+level of ``preferences'' is therefore geodesically near the preference
+region and far from individual episodes \emph{if} the encoder norm is
+calibrated (H2) and angular separation holds---hierarchical pre-filtering
+is a hypothesis conditional on H2, not a consequence of the metric alone.
+Spherical distance is great-circle distance on the unit sphere. No claim
+about hub distortion is made: none was measured or derived here.
+
+\subsection{Reconsolidation as geodesic transport}
+\label{sec:reconsolidation}
+
+This is the load-bearing mechanism. Where REALM performs LLM-driven graph
+surgery after retrieval \cite{realm}, GyroMem moves points.
+
+\begin{definition}[Geodesic reconsolidation]
+Let $m \in \M$ be a retrieved memory, $q \in \M$ the query (or the
+retrieved context centroid), and $\kappa \in [0,1]$ a confidence score for the
+retrieval's usefulness (downstream answer entailment, or a learned critic
+whose computation cost is counted in H3). The update is
+\begin{equation}
+m \leftarrow \exp_m\!\big(\eta\,\kappa \cdot \log_m(q)\big)
+\qquad\text{(strengthen)},
+\end{equation}
+\begin{equation}
+m \leftarrow \exp_m\!\big(-\eta\,\kappa \cdot \log_m(q')\big)
+\qquad\text{(weaken, against contradicted content $q'$)},
+\end{equation}
+with step size $\eta \in (0,1)$, where $q'$ is the point formed from the
+contradicting evidence by the formation rule of
+\S\ref{sec:formation}, and antipodal spherical targets are resolved by
+the tie-break rule of \S\ref{sec:formation}. In the Poincar\'e component
+the strengthen update is M\"obius interpolation toward $q$,
+$m \leftarrow m \oplus_c \big(t \otimes_c ((-m) \oplus_c q)\big)$ with
+$t = \eta\kappa$; scalar multiplication alone scales from the origin and
+does not interpolate toward $q$. In the Euclidean
+component it reduces to the familiar $m \leftarrow (1-\eta \kappa)m + \eta \kappa\,q$.
+\end{definition}
+
+The update is $O(d)$ per memory---one logarithmic and one exponential
+map---versus an LLM call per edge in surgery-based approaches. It is a
+bounded, confidence-gated update of the same family as REALM's $w \leftarrow
+\mathrm{Clip}(w + \eta \kappa)$; no claim that it is a precise analogue of
+that rule, or that it preserves topology, is made here.
+
+\begin{proposition}[Stability sketch: hyperbolic component only]
+Fix a target $q$ and consider the strengthen map
+$T(m) = \exp_m(t \cdot \log_m(q))$ with $t = \eta \kappa \in [0,1)$ on a
+Hadamard manifold (simply connected, non-positive curvature; the
+hyperbolic component qualifies, the spherical component does not, and the
+product manifold as a whole is not Hadamard). Then $T$ is a contraction toward
+$q$: $d(T(m), q) = (1-t)\,d(m,q)$, strict for $t > 0$ (at $t = 0$, $T$ is
+the identity). Iterating $T$ with the target fixed
+converges to $q$ geometrically. No claim is made about query-varying
+targets, stochastic convergence, or the spherical component: the
+confidence sequence $\kappa_t$ is data-dependent, not a Robbins--Monro
+schedule, and convergence to any Fr\'echet mean is a conjecture, stated
+as such, whose proof would require a step-size schedule, compact-support
+and bounded-curvature hypotheses, and a treatment of the spherical
+component---none of which is supplied here.
+\end{proposition}
+
+\begin{proof}[Sketch]
+The contraction identity is the defining property of geodesic
+interpolation on any uniquely geodesic space. The mixed-sign
+product-manifold case, where the spherical component is \emph{not}
+Hadamard and geodesics are not unique, is outside this sketch---
+this is the honest boundary of the claim. The identity is cited as
+geodesic interpolation in a Hadamard space, not via the hyperbolic
+neural-network toolkit of \cite{ganea2018}.
+\end{proof}
+
+\begin{remark}[What the sketch does and does not buy]
+It buys: no runaway drift under repeated retrieval (the failure mode of
+unbounded Hebbian rules), and a principled step-size schedule. It does
+not buy: guarantees under adversarial queries (governance, per
+\cite{epistemics}, is still required), or anything about the spherical
+component, where geodesics are not unique. We state this plainly because
+the literature's habit is to over-claim exactly here.
+\end{remark}
+
+\subsection{Forgetting as availability drift}
+\label{sec:forgetting}
+
+Wall-clock exponential decay $e^{-\lambda \Delta t}$ is the wrong
+retention rule on its own \cite{engramrag}: it evicts foundational facts.
+Hand-tuned thresholds are fragile \cite{epistemics}. GyroMem replaces both
+with drift of \emph{availability} on the manifold. Each memory carries a
+usage potential $u(m,t)$ decaying exponentially in evidence-events
+without retrieval and refreshed to $1$ on retrieval. The drift field is
+\begin{equation}
+\frac{dm}{dt} = -\lambda(u)\,\nabla_m\, \rho(m),
+\end{equation}
+where $\rho(m)$ is the distance from the region's abstraction centroid
+(the Fr\'echet mean of the region's members, computed at dreaming time)
+under the product metric, and $\lambda(u)$ is an explicit decreasing
+function of $u$, to be fixed in the specification. Low-usage memories drift
+\emph{inward}: episodes move toward their summaries, and their
+availability for retrieval falls. Drift changes availability only: the
+manifold is the index, and raw histories are preserved in a separate
+raw-history store, so a drifted memory is re-formed from its preserved
+raw history on re-access---that, and only that, is the sense in which
+drift is reversible. Drift past the inner horizon---a radius $r_H$ in the
+hyperbolic component, to be fixed in the specification---removes the memory
+from the retrievable index and schedules it for the deletion operation:
+explicit user action recorded in an audit record, removing the record
+from the index and the raw-history store. That deletion mechanism is a
+requirement, not a built component of this theory paper. This deletion
+operation is specified independently of the companion Mnemodynamics
+paper's deletion procedure (support-closure removal, per-sentence
+receipts, certificate, \S2.5 there): it does not inherit support closure
+or receipts, and its probe is the separate probe of H4b below. Composing
+the two procedures is future work. Nothing in this
+paper should be read as a deletion or retention guarantee: drift is an
+availability mechanism, and by design a drifted record remains fully
+recoverable until the deletion operation runs. Deployments with
+multi-principal or adversarial scope must treat drift as a retention
+hazard, not a governance property, and run the security probes of
+\S\ref{sec:experiments} before relying on it. On terminology, shared with
+the companion Mnemodynamics paper: \emph{relaxation} is loss of
+availability; \emph{deletion} is the operation specified above;
+\emph{verified} means measured by a stated procedure with a reported
+rate, never asserted; \emph{certificate} means the companion paper's
+self-issued, unsigned, return-only artifact, not claimed here;
+\emph{authority} means the companion paper's (origin, act\_class) pair
+---no authority field exists in this paper. This paper's section title uses ``forgetting'' for
+availability drift; in user-facing copy, ``forgetting'' means only the
+deletion operation.
+
+\subsection{Promotion as radial motion}
+
+The consolidation ladder of \cite{epistemics}---keep / summarize / extract
+skill / distill rule / forget---becomes radial position. Dreaming-phase
+consolidation is a separate offline procedure, \`a la \cite{engramrag}: it
+clusters memories with a clustering algorithm and parameters to be fixed in the
+specification, computes each cluster's centroid as the Fr\'echet mean of
+its members under the product metric, and moves centroids inward while
+pushing members outward slightly (discrimination), i.e., abstraction is
+centripetal motion. A ``skill'' is a centroid that has drifted inward past
+a radius threshold $r_{\mathrm{skill}}$, to be fixed in the specification, so
+that it serves as a retrieval attractor for its former members. Dreaming
+is a procedure with parameters, not a consequence of the drift field.
+This dreaming clustering is independent of the formation clustering of
+\S\ref{sec:formation}: it clusters manifold points under the product
+metric, where formation clusters encoder vectors in Euclidean space
+before formation; the two procedures share only the name, with separate
+algorithms and parameters, both to be fixed in the specification.
+
+\subsection{Unified tier budgeting}
+\label{sec:tiers}
+
+KV-cache systems \cite{actkv,agentkv} and external stores
+\cite{jevmem,realm,jam} manage disjoint budgets. In GyroMem, the
+transient and persistent tiers are \emph{budget partitions over the same
+manifold} $\M$: the transient partition is a recency-weighted subset of
+the manifold (recent tokens), not a curvature region, and the persistent
+partition is the remainder. A single controller allocates a
+global memory budget $\mathcal{B}$ across tiers and regions by expected utility per
+unit cost, generalizing Jev-Mem's $u_d$ utility estimates \cite{jevmem}:
+\begin{equation}
+\max_{\{b_r\}} \sum_r U_r(b_r) \quad \text{s.t.}\quad \sum_r b_r \le \mathcal{B},
+\end{equation}
+where $U_r$ is the estimated marginal retrieval utility of region $r$ at
+allocation $b_r$, estimated by Jev-Mem's $u_d$-style estimator as to be stated in
+the specification; concavity of $U_r$ is assumed, and the existence of
+the maximizer is conditional on that assumption. Eviction in the transient
+tier is the same drift dynamics at a faster timescale, with a timescale
+parameter to be fixed in the specification; transient content is destroyed on
+eviction by a defined destruction step, and no transient record is
+treated as persistent. Tier isolation is a requirement: a transient
+record must not leak into persistent retrieval, and the ephemeral /
+persistent boundary is preserved by construction of the partitions, not
+by geometry alone.
+
+\subsection{Just-in-time geodesic research}
+
+Following JAM's refutation of ahead-of-time compression \cite{jam},
+GyroMem constructs query-time context by \emph{navigating} $\M$: starting
+from the query point formed by the formation rule of
+\S\ref{sec:formation}, expand a geodesic ball by radius doubling from an
+initial radius $r_0$ (with the candidate set capped at a size to be fixed
+in the specification), assess sufficiency---has the Fr\'echet variance of
+the ball's members (the mean squared product distance from the ball's
+Fr\'echet mean) fallen below $\tau$?---and stop. The threshold $\tau$ is a
+tuned parameter, to be fixed in the specification; no claim is made that the
+geometric stopping rule replaces hand-tuned thresholds in general. Raw histories
+are preserved (JAM's Memorizer lesson); the manifold is the index, not a
+compression of it.
+
+%----------------------------------------------------------------------
+\section{Proposed experimental validation}
+\label{sec:experiments}
+
+This section pre-registers the empirical program. \emph{No results are
+reported}---that is the point. Each hypothesis names its ablation, its
+metric, and the condition under which we abandon the corresponding claim.
+
+\textbf{Benchmarks.} LoCoMo and LongMemEval (the field standards; splits
+frozen before any run), plus a \emph{transfer benchmark} we will construct
+following the Epistemics warning \cite{epistemics}: tasks where
+consolidated memory must change what the agent can \emph{do} (skill
+transfer, contradiction recovery), scored against a computable oracle,
+not an LLM judge alone. The transfer benchmark's construction is specified
+here: task families (multi-hop composition, contradiction recovery, skill
+reuse across sessions), an executable-check oracle per family, and leakage
+controls (held-out task generators; adversarial probing of the benchmark
+itself before trusting it). Baselines are Jev-Mem, JAM, and REALM run on
+the same harness, plus TIDER's explicit constraint channels
+\cite{tider} and the anti-persistence updater \cite{antipersistence} as
+named comparators; the encoder is held fixed across the geometry arms of
+H1, so geometry is not confounded with encoder or formation.
+
+\textbf{Hypotheses and kill criteria.} All tests use $\alpha = 0.05$ with
+paired bootstrap confidence intervals; a win on transfer alone, without
+the recall condition where stated, counts as partial support under the
+interpretation rule stated per hypothesis, not as a full pass.
+\begin{description}[leftmargin=*]
+\item[H1 (geometry matters).] Manifold+geodesic retrieval beats the
+\emph{identical} system with Euclidean embeddings + cosine on recall@k
+and on transfer, at matched total dimension, with the encoder held fixed
+across arms. \emph{Metric and margin:} recall@k and transfer score on the
+full frozen LoCoMo and LongMemEval splits. \emph{Kill:} no statistically
+significant win on either recall or transfer; a win on transfer alone is
+partial support (the geometry helps decisions, not retrieval) and triggers
+revision of the retrieval claim, not abandonment of the theory; pivot to
+Euclidean geodesic updates (still novel vs.\ LLM surgery on cost) or
+abandon.
+\item[H2 (calibrated formation).] The radial regularizer
+(\S\ref{sec:formation}) is necessary: without it, hierarchical
+pre-filtering vanishes. \emph{Metric:} pre-filtering precision---the
+fraction of retrieved candidates drawn from the query's abstraction
+region---with a margin of at least 5 percentage points at $\alpha = 0.05$.
+\emph{Kill:} ablated formation matches full formation on this metric;
+drop the trained component and simplify the theory.
+\item[H3 (cheap consolidation).] Geodesic reconsolidation matches or
+exceeds LLM graph surgery (REALM-style) on consolidation quality at
+$<\!1\%$ of the update cost. \emph{Metric and margin:} transfer score
+within 2 points of REALM-style surgery at $<\!1\%$ of wall-clock and
+token cost, where cost includes the confidence ($\kappa$) computation and
+encoder training amortized over the benchmark, plus ANN rerank cost.
+\emph{Kill:} quality gap over 2 points, or cost at or over 1\%;
+retain geometry for retrieval only.
+\item[H4a (availability).] Geometric drift preserves availability of
+load-bearing facts under budget pressure, with recovery on re-access.
+\emph{Metric:} at least 99\% recovery of load-bearing facts on re-access
+after budget pressure (tolerance: at most 1\% irreversible availability
+loss). \emph{Kill:} recovery below 99\%; the drift field is wrong and must
+be redesigned.
+\item[H4b (deletion).] The deletion operation of
+\S\ref{sec:forgetting} removes the record from the retrievable index and
+the raw-history store, with the residual recovery rate reported by a
+probe whose reader, channels, and thresholds are to be fixed in the
+specification before any run. \emph{Kill:} the deletion operation fails to remove from
+index and raw store, or the residual rate is not reported.
+\item[H5 (unified budget).] Joint tier budgeting beats separate
+KV-cache + external-store management on end-to-end task throughput at
+fixed total memory. \emph{Metric and margin:} tasks per hour at a fixed
+quality threshold, plus latency, with a margin of at least 5\% at
+$\alpha = 0.05$. \emph{Kill:} no win at the stated margin; keep the tiers
+separate and the manifold for the external store only.
+\end{description}
+
+\textbf{Security probes (scope conditions, not guarantees).} Three probes
+run before any multi-principal or adversarial deployment claim: a steering
+probe (can repeated queries drag a memory toward the query?---the
+contraction mechanism of \S\ref{sec:reconsolidation} is attacker-steerable
+by construction under adversarial queries); a deletion-residual probe
+(does a drifted record remain recoverable, and does the deletion operation
+remove it from every channel?); and a cross-principal leakage probe (does
+one principal's record influence another's retrieval?). Each probe has a
+pre-stated kill: steering, residual recovery, or leakage above the
+Phase-0 thresholds blocks the corresponding deployment claim. The theory
+as stated is single-principal and non-adversarial in scope; governance
+under adversarial queries is still required \cite{epistemics}.
+
+\textbf{Methodological commitments.} Fixed random seeds; paired bootstrap
+confidence intervals; ablations that change exactly one component; public
+release of code, configs, and the transfer benchmark; independent
+replication invited before any product claims. We will publish negative
+results with the same prominence as positive ones.
+
+%----------------------------------------------------------------------
+\section{Discussion: where this is most likely to fail}
+\label{sec:failure}
+
+\textbf{1. The hierarchy assumption.} Hyperbolic geometry wins when data
+is hierarchical \cite{nickel2017}. Agent memories may be messier---flat
+lists of facts, adversarial noise, contradictory updates---in which case
+the manifold is expensive ornament. H1 is designed to detect exactly this.
+
+\textbf{2. ANN immaturity.} Product-manifold nearest-neighbor search lacks
+FAISS-grade tooling. Our fallback stack---tangent-space candidate
+generation at the query point plus exact geodesic rerank---is $O(\log n)$
+for candidates but exact rerank is linear in the capped candidate set; at
+billion-scale this may lose to Euclidean HNSW on latency. This is an
+engineering risk, not a theoretical one, and we carry it openly.
+
+\textbf{3. The spherical component.} Non-unique geodesics, no contraction
+guarantee, curvature-sign mixing without a full theory (noted in the
+Proposition's proof sketch). If the spherical component causes more
+trouble than value, the honest move is a hyperbolic--Euclidean product,
+and we have pre-committed to reporting that. The fallback is
+pre-committed here: if spherical-component ablations show no win, the
+theory drops the spherical component rather than retaining it.
+
+\textbf{4. Encoder calibration.} H2's radial regularizer is the theory's
+one trained component and therefore its most fragile: if abstraction
+level cannot be calibrated into embedding norm, formation collapses to
+an arbitrary projection and the hierarchy story fails.
+
+\textbf{5. Evaluation gaming.} Beating LoCoMo is not the goal; transfer
+is. If our transfer benchmark turns out to be gameable or circular, H1--H5
+prove nothing. We will adversarially probe our own benchmark before
+trusting it, following the anti-leakage discipline of \cite{epistemics}.
+
+\textbf{6. Stronger null hypotheses.} The fairest baselines are not
+mem0-style systems but the best 2026 systems (Jev-Mem, JAM, REALM) with
+\emph{our} evaluation harness. A win against weak baselines is not a win.
+
+\textbf{7. Prior art may narrow the contribution.} No verified
+product-manifold agent-memory system was found in the surveyed
+literature (see \S\ref{sec:nearest}); if one is demonstrated under
+independent evaluation, GyroMem's novelty narrows to formalization, the
+three mechanisms, and the evaluation program. We would welcome that
+result---it would confirm the geometry bet while disciplining our claims.
+
+\textbf{8. Retention and security scope.} Drift is an availability
+mechanism, not a deletion mechanism: a drifted record remains recoverable
+until the deletion operation runs, the manifold carries no origin, owner,
+or authority information, and reconsolidation is steerable by repeated
+queries. Any deployment beyond the single-principal, non-adversarial
+scope of this paper must run the security probes of
+\S\ref{sec:experiments} and treat drift as a retention hazard.
+
+%----------------------------------------------------------------------
+\section{From theory to system: engineering roadmap}
+
+Briefly, since this paper's job is the theory: (0) prior-art sweep and
+formal spec---this paper; (1) Python prototype (Poincar\'e/Lorentz store,
+gyrovector ops, drift dynamics) on a LoCoMo subset; (2) full evaluation
+per \S\ref{sec:experiments} with kill-criteria gates; (3) if gates pass,
+open-source engine, public benchmark release, hosted API. Each phase is
+gated; phases do not proceed on hope.
+
+%----------------------------------------------------------------------
+\section{Conclusion}
+%----------------------------------------------------------------------
+
+GyroMem reframes agentic memory geometrically: a product manifold with
+per-region curvature to be fixed in the specification, geodesic retrieval,
+reconsolidation as geodesic transport, forgetting as availability drift,
+and one budget across tiers.
+It is motivated by four gaps stated in the recent literature, grounded
+in established mathematics, and---unusually for a theory paper---shipped
+with its own falsification program. It may be wrong; \S\ref{sec:failure}
+explains exactly how. If it is right, memory stops being a pile of
+vectors with heuristics on top and becomes what it should have been all
+along: a space with a shape, in which remembering is moving, learning is
+transport, and forgetting is drift of availability that can be undone
+before deletion.
+
+%----------------------------------------------------------------------
+\begin{thebibliography}{99}
+%----------------------------------------------------------------------
+
+\bibitem{jevmem} D.~Jiang, Y.~Li, and B.~Li.
+\newblock Jev-Mem: System-One-Controlled Agentic Memory for Efficient AI Agents.
+\newblock \emph{arXiv:2609.23986}, 2026.
+
+\bibitem{jam} B.~Yan, C.~Li, H.~Qian, S.~Lu, C.~Li, and Z.~Liu.
+\newblock Just-In-Time Agent Memory with Runtime Agentic Research.
+\newblock \emph{arXiv:2609.34385}, 2026.
+
+\bibitem{realm} Y.~Song et al.
+\newblock Retrieval-Driven Memory Reconsolidation for Long-Term LLM Agents.
+\newblock \emph{arXiv:2609.16053}, 2026.
+
+\bibitem{actkv} Z.~Wang et al.
+\newblock ActKV: Efficient LLM Agents through Action-Guided KV Cache Management.
+\newblock \emph{arXiv:2609.31395}, 2026.
+
+\bibitem{epistemics} S.~Annapureddy and A.~P.~Thamatani.
+\newblock The Epistemics of Agent Memory: Measuring, and Governing, the
+Consolidation Decision in Long-Horizon LLM Agents.
+\newblock \emph{arXiv:2609.33013}, 2026.
+
+\bibitem{mhr} P.~Hua and Y.~Xiao.
+\newblock Matryoshka Hash Representations for Model-Aware Compact Semantic Retrieval.
+\newblock \emph{arXiv:2609.07276}, 2026.
+
+\bibitem{engramrag} B.~Potineni et al.
+\newblock EngramRAG: Dynamic Usage-Weighted Topology and Synaptic Consolidation
+for Multi-Hop Agentic Memory.
+\newblock \emph{arXiv:2609.32049}, 2026.
+
+\bibitem{biomem} Y.~Qian et al.
+\newblock Personalizing LLM Agent Memory Using Biometrics.
+\newblock \emph{arXiv:2609.08558}, 2026.
+
+\bibitem{mrvq} S.~Culatana, S.-E.~Huang, and K.~Li.
+\newblock MRVQ: One Resident Index for Dimension- and Rate-Elastic Vector Search.
+\newblock \emph{arXiv:2610.03651}, 2026.
+
+\bibitem{agentkv} T.~T.~Liu et al.
+\newblock AgentKV: Phase-Aware KV Eviction for Agentic LLMs.
+\newblock \emph{arXiv:2609.14872}, 2026.
+
+\bibitem{collabmem} H.~Zhang et al.
+\newblock Collaborative Memory for Multi-Agent VLM Systems.
+\newblock \emph{arXiv:2609.17921}, 2026.
+
+\bibitem{simplearm} Y.~Zhang et al.
+\newblock Simple Agentic Memory for Generalist Robot Policies.
+\newblock \emph{arXiv:2609.36595}, 2026.
+
+\bibitem{nickel2017} M.~Nickel and D.~Kiela.
+\newblock Poincar\'e Embeddings for Learning Hierarchical Representations.
+\newblock In \emph{Advances in Neural Information Processing Systems 30}, 2017.
+
+\bibitem{ganea2018} O.~Ganea, G.~B\'ecigneul, and T.~Hofmann.
+\newblock Hyperbolic Neural Networks.
+\newblock In \emph{Advances in Neural Information Processing Systems 31}, 2018.
+
+\bibitem{gu2019} A.~Gu, F.~Sala, B.~Gunel, and C.~R\'e.
+\newblock Learning Mixed-Curvature Representations in Products of Model Spaces.
+\newblock In \emph{International Conference on Learning Representations}, 2019.
+
+\bibitem{kusupati2022} A.~Kusupati et al.
+\newblock Matryoshka Representation Learning.
+\newblock In \emph{Advances in Neural Information Processing Systems 35}, 2022.
+
+\bibitem{mcclelland1995} J.~L.~McClelland, B.~L.~McNaughton, and R.~C.~O'Reilly.
+\newblock Why there are complementary learning systems in the hippocampus and
+neocortex: Insights from the successes and failures of connectionist models
+of learning and memory.
+\newblock \emph{Psychological Review}, 102(3):419--457, 1995.
+
+\bibitem{nader2000} K.~Nader, G.~E.~Schafe, and J.~E.~LeDoux.
+\newblock Fear memories require protein synthesis in the amygdala for
+reconsolidation after retrieval.
+\newblock \emph{Nature}, 406:722--726, 2000.
+
+\bibitem{hyperbolicrag} L.~Cao, R.~Wang, J.~Li, Z.~Zhou, and M.~Yang.
+\newblock HyperbolicRAG: Enhancing Retrieval-Augmented Generation with Hyperbolic Representations.
+\newblock \emph{arXiv:2511.18808}, 2025.
+
+\bibitem{chakrabarti2026} A.~Chakrabarti.
+\newblock Real-Time Hybrid Retrieval in Hyperbolic Space for Retrieval-Augmented Generation on Edge Devices.
+\newblock \emph{arXiv:2608.01450}, 2026.
+
+\bibitem{prokhorenkova2022} L.~Prokhorenkova, D.~Baranchuk, N.~Bogachev, Y.~Demidovich, and A.~Kolpakov.
+\newblock Graph-Based Nearest Neighbor Search in Hyperbolic Spaces.
+\newblock In \emph{International Conference on Learning Representations}, 2022.
+
+\bibitem{deng2026} C.~Deng, J.~Gao, K.~Lu, F.~Luo, and C.~Xin.
+\newblock Locality Sensitive Hashing in Hyperbolic Space.
+\newblock In \emph{Symposium on Computational Geometry (SoCG)}, 2026.
+\newblock \emph{arXiv:2603.19724}.
+
+\bibitem{geometry} I.~Zhechev et al.
+\newblock The Geometry of Agent Memory: Forecasting Retrieval-Bound Memory
+Failures, and Characterizing Its Limits.
+\newblock \emph{arXiv:2610.26433}, 2026. Workshop paper (PALM).
+
+\bibitem{tider} D.~Sheng et al.
+\newblock TIDER: RL-Guided Temporal Localization for Dual-Channel Retrieval
+in Long-Horizon Agent Memory.
+\newblock \emph{arXiv:2610.23598}, 2026.
+
+\bibitem{antipersistence} R.~Wang, K.~Panaganti, and Y.~Zhou.
+\newblock More Memory, Worse Agents: Error Reproduction and Anti-Persistence
+in LLM Agents.
+\newblock \emph{arXiv:2610.27406}, 2026.
+
+\end{thebibliography}
+
+%----------------------------------------------------------------------
+\appendix
+\section{Gyrovector formulary}
+\label{app:formulary}
+
+We follow the convention of \cite{ganea2018}: the Poincar\'e ball
+$\B^n_c = \{x \in \R^n : c\|x\|^2 < 1\}$ has curvature $-c < 0$.
+M\"obius addition is
+\begin{equation}
+x \oplus_c y =
+\frac{(1 + 2c\langle x,y\rangle + c\|y\|^2)\,x + (1 - c\|x\|^2)\,y}
+{1 + 2c\langle x,y\rangle + c^2\|x\|^2\|y\|^2}.
+\end{equation}
+M\"obius scalar multiplication by $r \in \R$:
+\begin{equation}
+r \otimes_c x = \tanh\!\big(r\,\operatorname{artanh}(\sqrt{c}\|x\|)\big)\,
+\frac{x}{\sqrt{c}\|x\|}.
+\end{equation}
+The induced distance is
+\begin{equation}
+d_c(x,y) = \frac{2}{\sqrt{c}}\,
+\operatorname{artanh}\!\big(\sqrt{c}\,\|{-x} \oplus_c y\|\big),
+\end{equation}
+equivalently $d_c(x,y) = \frac{1}{\sqrt{c}}\operatorname{arcosh}\!\left(1 +
+\frac{2c\|x-y\|^2}{(1-c\|x\|^2)(1-c\|y\|^2)}\right)$.
+The exponential and logarithmic maps at $x$ are
+\begin{equation}
+\exp^c_x(v) = x \oplus_c \left(
+\tanh\!\left(\sqrt{c}\,\frac{\lambda^c_x \|v\|}{2}\right)
+\frac{v}{\sqrt{c}\,\|v\|}\right), \qquad
+\lambda^c_x = \frac{2}{1 - c\|x\|^2},
+\end{equation}
+with $\log^c_x$ its inverse. For numerical work near the boundary we
+recommend the Lorentz (hyperboloid) model, which is isometric and avoids
+the $\|x\| \to 1/\sqrt{c}$ instability.
+
+\section{Notation}
+\label{app:notation}
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+Symbol & Meaning \\
+\midrule
+$\M$ & product-manifold memory space \\
+$\Hyp^a_{-c_h}, \Sph^b_{c_s}, \R^c$ & hyperbolic / spherical / Euclidean components \\
+$d_{\M}$ & weighted product geodesic distance \\
+$m, q$ & memory point, query point \\
+$\eta, \kappa$ & reconsolidation step size, confidence \\
+$u(m,t)$ & usage potential of memory $m$ at time $t$ \\
+$\mathcal{B}, b_r, U_r$ & total budget, region allocation, region utility \\
+$c$ (formulary only) & curvature parameter: the Poincar\'e ball $\B^n_c$ has curvature $-c$; distinct from the Euclidean dimension $c$ above \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\end{document}

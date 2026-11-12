@@ -1,0 +1,18 @@
+# Dependencies (none at runtime, but keep the door closed)
+node_modules/
+
+# Local user data (conversations, knowledge, memory, logs, settings)
+data/*.json
+data/*.json.corrupt-*
+!data/.gitkeep
+
+# Editor / OS artefacts
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Test / demo scratch
+/tmp/
