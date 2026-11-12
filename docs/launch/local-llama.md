@@ -25,10 +25,12 @@ approval in memory and watching the agent refuse to act on it.
 GitHub: https://github.com/dmitriy718/webgui
 
 Honest caveat: this is a theory with a working reference implementation,
-not a benchmarked product. The papers are in `docs/papers/`. I'm
-especially interested in whether the geometry actually helps retrieval
-once you swap in a real encoder — the offline demo is calibrated, the
-real test is LoCoMo/LongMemEval and I haven't run it yet.
+not a benchmarked product. The papers are in `docs/papers/`. I did run
+LoCoMo/LongMemEval retrieval overnight with the offline encoder, and
+geodesic does NOT beat cosine there (LoCoMo recall@10 14.1% vs 22.9%;
+full report in `bench-report.md`, harness in `server/bench/`). The
+honest reading is that the geometry claim is untested with a real
+encoder, not disproved — re-running with nomic-embed-text is next.
 
 **Posting notes (do not paste):**
 - One post, link in the body, no cross-post spam the same day. Reply to

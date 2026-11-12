@@ -1,4 +1,4 @@
-# X thread draft — post after Show HN, same day or next
+# X thread draft — post Sat Nov 14 (HN Thu Nov 12, r/LocalLLaMA Fri Nov 13 — one launch post per day max)
 
 **1/**
 Most agent memory remembers everything. I built one that decides what to
@@ -33,9 +33,10 @@ Five theory scenarios ship in the repo — `npm run scenarios` prints the
 report with the numbers.
 
 **5/**
-Honest status: theory + working reference implementation, not a
-benchmarked product. Papers in docs/papers/. The scenarios demonstrate
-the mechanisms; the Phase 2 evals (LoCoMo/LongMemEval) are still to run.
+Honest status: theory + working reference implementation. I ran
+LoCoMo/LongMemEval retrieval overnight with the offline encoder:
+geodesic does NOT beat cosine there (LoCoMo R@10 14.1% vs 22.9%).
+Full report in bench-report.md — the real-encoder re-run is next.
 
 Tell me where the geometry or the authority lattice is wrong.
 
